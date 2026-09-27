@@ -1,39 +1,34 @@
 from __future__ import annotations
+
 import json
 from abc import ABC, abstractmethod
 from datetime import UTC, tzinfo
-from typing import Any
+from typing import Any, Literal
 
+from .exception_analyzer import CompactException, ExceptionAnalyzer
 from .record import LogRecord
 
+
+ExceptionMode = Literal["full", "compact", "none"]
+
+_VALID_EXCEPTION_MODES = frozenset(
+    {"full", "compact", "none"}
+)
+
+
 class Formatter(ABC):
-    """
-    Base class for all log formatters.
-    """
-
     @abstractmethod
-    def format(
-        self,
-        record: LogRecord,
-        *,
-        color: bool = False,
-    ) -> str:
-        """
-        Convert a LogRecord into its string representation.
-
-        `color` indicates whether the destination supports ANSI colors.
-        """
+    def format(self, record: LogRecord, *, color: bool = False) -> str:
         raise NotImplementedError
 
-class DefaultFormatter(Formatter):
-    """
-    Human-readable log formatter.
-    """
 
+class DefaultFormatter(Formatter):
     __slots__ = (
         "_timestamp_format",
         "_tzinfo",
         "_include_caller",
+        "_exception_mode",
+        "_exception_analyzer",
     )
 
     def __init__(
@@ -42,17 +37,25 @@ class DefaultFormatter(Formatter):
         timestamp_format: str = "%Y-%m-%d %H:%M:%S.%f %Z",
         tzinfo: tzinfo = UTC,
         include_caller: bool = True,
+        exception_mode: ExceptionMode = "full",
     ) -> None:
+        if exception_mode not in _VALID_EXCEPTION_MODES:
+            raise ValueError(
+                "exception_mode must be one of: "
+                "'full', 'compact', 'none'"
+            )
+
         self._timestamp_format = timestamp_format
         self._tzinfo = tzinfo
         self._include_caller = include_caller
+        self._exception_mode = exception_mode
+        self._exception_analyzer = ExceptionAnalyzer()
 
-    def format(
-        self,
-        record: LogRecord,
-        *,
-        color: bool = False,
-    ) -> str:
+    @property
+    def exception_mode(self) -> ExceptionMode:
+        return self._exception_mode
+
+    def format(self, record: LogRecord, *, color: bool = False) -> str:
         timestamp = record.timestamp.astimezone(
             self._tzinfo
         ).strftime(self._timestamp_format)
@@ -80,30 +83,60 @@ class DefaultFormatter(Formatter):
         text = " ".join(parts)
 
         if record.exception is not None:
-            text = f"{text}\n{record.exception.format()}"
+            exception_text = self._format_exception(
+                record,
+            )
+
+            if exception_text:
+                text = f"{text}\n{exception_text}"
 
         return text
 
-class JsonFormatter(Formatter):
-    """
-    Formats LogRecord instances as JSON.
-    """
+    def _format_exception(self, record: LogRecord) -> str:
+        exception = record.exception
 
-    __slots__ = ("_include_caller",)
+        if exception is None:
+            return ""
+
+        if self._exception_mode == "none":
+            return ""
+
+        if self._exception_mode == "full":
+            return exception.format().rstrip()
+
+        compact = self._exception_analyzer.analyze(exception)
+
+        return _format_compact_exception(compact)
+
+
+class JsonFormatter(Formatter):
+    __slots__ = (
+        "_include_caller",
+        "_exception_mode",
+        "_exception_analyzer",
+    )
 
     def __init__(
         self,
         *,
         include_caller: bool = True,
+        exception_mode: ExceptionMode = "full",
     ) -> None:
-        self._include_caller = include_caller
+        if exception_mode not in _VALID_EXCEPTION_MODES:
+            raise ValueError(
+                "exception_mode must be one of: "
+                "'full', 'compact', 'none'"
+            )
 
-    def format(
-        self,
-        record: LogRecord,
-        *,
-        color: bool = False,
-    ) -> str:
+        self._include_caller = include_caller
+        self._exception_mode = exception_mode
+        self._exception_analyzer = ExceptionAnalyzer()
+
+    @property
+    def exception_mode(self) -> ExceptionMode:
+        return self._exception_mode
+
+    def format(self, record: LogRecord, *, color: bool = False) -> str:
         data: dict[str, Any] = {
             "timestamp": record.timestamp.isoformat(),
             "level": record.level.name,
@@ -122,11 +155,10 @@ class JsonFormatter(Formatter):
             }
 
         if record.exception is not None:
-            data["exception"] = {
-                "type": record.exception.exception_type,
-                "message": record.exception.message,
-                "traceback": record.exception.format(),
-            }
+            self._add_exception(
+                data,
+                record,
+            )
 
         return json.dumps(
             data,
@@ -134,13 +166,42 @@ class JsonFormatter(Formatter):
             ensure_ascii=False,
         )
 
+    def _add_exception(
+        self,
+        data: dict[str, Any],
+        record: LogRecord,
+    ) -> None:
+        exception = record.exception
+
+        if exception is None:
+            return
+
+        if self._exception_mode == "none":
+            return
+
+        if self._exception_mode == "full":
+            compact = self._exception_analyzer.analyze(exception)
+
+            exception_data: dict[str, Any] = {
+                "type": exception.exception_type,
+                "message": exception.message,
+                "traceback": exception.format(),
+            }
+
+            if compact.location is not None:
+                exception_data["location"] = (
+                    compact.location.to_dict()
+                )
+
+            data["exception"] = exception_data
+            return
+
+        compact = self._exception_analyzer.analyze(exception)
+
+        data["exception"] = compact.to_dict()
+
+
 class ColoredFormatter(DefaultFormatter):
-    """
-    Human-readable formatter that optionally uses ANSI colors.
-
-    Colors are enabled only when the destination supports them.
-    """
-
     __slots__ = (
         "_colors",
         "_reset",
@@ -164,11 +225,13 @@ class ColoredFormatter(DefaultFormatter):
         tzinfo: tzinfo = UTC,
         include_caller: bool = True,
         colors: dict[str, str] | None = None,
+        exception_mode: ExceptionMode = "full",
     ) -> None:
         super().__init__(
             timestamp_format=timestamp_format,
             tzinfo=tzinfo,
             include_caller=include_caller,
+            exception_mode=exception_mode,
         )
 
         self._colors = (
@@ -176,6 +239,7 @@ class ColoredFormatter(DefaultFormatter):
             if colors is not None
             else self._DEFAULT_COLORS.copy()
         )
+
         self._reset = self._RESET
 
     def format(
@@ -192,9 +256,130 @@ class ColoredFormatter(DefaultFormatter):
         if not color:
             return message
 
-        color_code = self._colors.get(record.level.name)
+        color_code = self._colors.get(
+            record.level.name
+        )
 
         if color_code is None:
             return message
 
         return f"{color_code}{message}{self._reset}"
+
+
+def _format_compact_exception(
+    exception: CompactException,
+) -> str:
+    lines: list[str] = []
+
+    _append_exception(
+        lines,
+        exception,
+        prefix="",
+        connector=None,
+    )
+
+    return "\n".join(lines)
+
+
+def _append_exception(
+    lines: list[str],
+    exception: CompactException,
+    *,
+    prefix: str,
+    connector: str | None,
+) -> None:
+    location = _format_location(exception)
+
+    header = (
+        f"{exception.exception_type}: "
+        f"{exception.message}"
+    )
+
+    if connector is None:
+        lines.append(
+            f"{prefix}{header}"
+        )
+    else:
+        lines.append(
+            f"{prefix}{connector} {header}"
+        )
+
+    if location:
+        if connector == "├─":
+            location_prefix = f"{prefix}│  "
+        elif connector == "└─":
+            location_prefix = f"{prefix}   "
+        else:
+            location_prefix = prefix
+
+        lines.append(
+            f"{location_prefix}→ {location}"
+        )
+
+    for index, child in enumerate(exception.children):
+        is_last = index == len(exception.children) - 1
+
+        child_connector = (
+            "└─"
+            if is_last
+            else "├─"
+        )
+
+        child_prefix = prefix
+
+        if connector is not None:
+            child_prefix += (
+                "   "
+                if connector == "└─"
+                else "│  "
+            )
+
+        _append_exception(
+            lines,
+            child,
+            prefix=child_prefix,
+            connector=child_connector,
+        )
+
+    # Python's traceback semantics give explicit __cause__
+    # precedence over implicit __context__.
+    if exception.cause is not None:
+        lines.append("")
+        lines.append(
+            f"{prefix}Caused by:"
+        )
+
+        _append_exception(
+            lines,
+            exception.cause,
+            prefix=f"{prefix}  ",
+            connector=None,
+        )
+
+    elif exception.context is not None:
+        lines.append("")
+        lines.append(
+            f"{prefix}During handling of the above exception:"
+        )
+
+        _append_exception(
+            lines,
+            exception.context,
+            prefix=f"{prefix}  ",
+            connector=None,
+        )
+
+
+def _format_location(
+    exception: CompactException,
+) -> str:
+    if exception.location is None:
+        return ""
+
+    location = exception.location
+
+    return (
+        f"{location.filename}:"
+        f"{location.line_number} "
+        f"in {location.function_name}"
+    )

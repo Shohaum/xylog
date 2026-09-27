@@ -24,7 +24,16 @@ class ExceptionInfo:
     
     @property
     def exception_type(self) -> str:
-        """Name of the exception class"""
+        """Name of the exception class."""
+        exception_type = getattr(
+            self.traceback,
+            "exc_type_str",
+            None,
+        )
+
+        if exception_type:
+            return exception_type
+
         return self.traceback.exc_type.__name__
 
     @property

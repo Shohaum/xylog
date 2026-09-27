@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from contextlib import AbstractContextManager
 from typing import Any
+import sys
 
 from .context import bind
 from .filters import Filter
@@ -220,9 +221,13 @@ class Logger:
     def exception(
         self,
         message: str,
-        exception: BaseException,
+        *,
+        exception: BaseException | None = None,
         **kwargs: Any,
     ) -> None:
+        if exception is None:
+            exception = sys.exception()
+
         self.error(
             message,
             exception=exception,

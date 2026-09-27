@@ -650,3 +650,380 @@
 #     logger.info("Message from request")
 
 # logger.close()
+
+# Full exception
+# from xylog import get_logger
+
+# logger = get_logger("app")
+
+# def validate_user(user_id: int) -> None:
+#     if user_id <= 0:
+#         raise ValueError("Invalid user ID")
+
+# def get_user(user_id: int) -> None:
+#     validate_user(user_id)
+
+# try:
+#     get_user(-10)
+# except Exception:
+#     logger.exception("Failed to process user")
+
+# Compact exception
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import DefaultFormatter
+
+# formatter = DefaultFormatter(
+#     exception_mode="compact",
+# )
+
+# handler = ConsoleHandler(
+#     formatter=formatter,
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False
+# )
+
+# def validate_user(user_id: int) -> None:
+#     if user_id <= 0:
+#         raise ValueError("Invalid user ID")
+
+# def get_user(user_id: int) -> None:
+#     validate_user(user_id)
+
+# try:
+#     get_user(-10)
+# except Exception:
+#     logger.exception("Failed to process user")
+
+# Explicit raise ... from ...
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import DefaultFormatter
+
+# handler = ConsoleHandler(
+#     formatter=DefaultFormatter(
+#         exception_mode="compact",
+#     ),
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False,
+# )
+
+# def connect_database() -> None:
+#     raise ConnectionError("connection refused")
+
+
+# def load_user() -> None:
+#     try:
+#         connect_database()
+#     except ConnectionError as exc:
+#         raise RuntimeError("Unable to load user") from exc
+
+# try:
+#     load_user()
+# except Exception:
+#     logger.exception("Request failed")
+
+# Implicit exception context
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import DefaultFormatter
+
+# handler = ConsoleHandler(
+#     formatter=DefaultFormatter(
+#         exception_mode="compact",
+#     ),
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False,
+# )
+
+# def parse_user() -> None:
+#     raise ValueError("Invalid user data")
+
+# def process_user() -> None:
+#     try:
+#         parse_user()
+#     except ValueError:
+#         raise RuntimeError("Could not process user")
+
+# try:
+#     process_user()
+# except Exception:
+#     logger.exception("Request failed")
+
+# ExceptionGroup
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import DefaultFormatter
+
+# handler = ConsoleHandler(
+#     formatter=DefaultFormatter(
+#         exception_mode="compact",
+#     ),
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False,
+# )
+
+# def validate_user() -> None:
+#     raise ValueError("Invalid user")
+
+# def fetch_database() -> None:
+#     raise TimeoutError("Database timed out")
+
+# def process() -> None:
+#     errors = []
+
+#     try:
+#         validate_user()
+#     except Exception as exc:
+#         errors.append(exc)
+
+#     try:
+#         fetch_database()
+#     except Exception as exc:
+#         errors.append(exc)
+
+#     raise ExceptionGroup(
+#         "Multiple operations failed",
+#         errors,
+#     )
+
+# try:
+#     process()
+# except Exception:
+#     logger.exception("Processing failed")
+
+# Nested ExceptionGroup
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import DefaultFormatter
+
+# handler = ConsoleHandler(
+#     formatter=DefaultFormatter(
+#         exception_mode="compact",
+#     ),
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False,
+# )
+
+# def validate_user() -> None:
+#     raise ValueError("Invalid user")
+
+# def validate_permissions() -> None:
+#     raise PermissionError("Insufficient permissions")
+
+# def database_operation() -> None:
+#     raise TimeoutError("Database timed out")
+
+# def process() -> None:
+#     validation_errors = []
+
+#     try:
+#         validate_user()
+#     except Exception as exc:
+#         validation_errors.append(exc)
+
+#     try:
+#         validate_permissions()
+#     except Exception as exc:
+#         validation_errors.append(exc)
+
+#     validation_group = ExceptionGroup(
+#         "Validation failed",
+#         validation_errors,
+#     )
+
+#     try:
+#         database_operation()
+#     except Exception as exc:
+#         raise ExceptionGroup(
+#             "Processing failed",
+#             [
+#                 validation_group,
+#                 exc,
+#             ],
+#         )
+
+# try:
+#     process()
+# except Exception:
+#     logger.exception("Request failed")
+
+# Test BaseExceptionGroup
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import DefaultFormatter
+
+# handler = ConsoleHandler(
+#     formatter=DefaultFormatter(
+#         exception_mode="compact",
+#     ),
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False,
+# )
+
+# def operation_one() -> None:
+#     raise ValueError("Operation one failed")
+
+# def operation_two() -> None:
+#     raise KeyboardInterrupt()
+
+# try:
+#     errors = []
+
+#     try:
+#         operation_one()
+#     except BaseException as exc:
+#         errors.append(exc)
+
+#     try:
+#         operation_two()
+#     except BaseException as exc:
+#         errors.append(exc)
+
+#     raise BaseExceptionGroup(
+#         "Operations failed",
+#         errors,
+#     )
+
+# except BaseException:
+#     logger.exception("Batch operation failed")
+
+# # exception_mode="none"
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import DefaultFormatter
+
+# handler = ConsoleHandler(
+#     formatter=DefaultFormatter(
+#         exception_mode="none",
+#     ),
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False,
+# )
+
+# def validate_user() -> None:
+#     raise ValueError("Invalid user")
+
+# try:
+#     validate_user()
+# except Exception:
+#     logger.exception("Validation failed")
+
+# # JSON compact
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import JsonFormatter
+
+# handler = ConsoleHandler(
+#     formatter=JsonFormatter(
+#         exception_mode="compact",
+#     ),
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False,
+# )
+
+# def connect_database() -> None:
+#     raise ConnectionError("connection refused")
+
+# def load_user() -> None:
+#     try:
+#         connect_database()
+#     except ConnectionError as exc:
+#         raise RuntimeError("Unable to load user") from exc
+
+# try:
+#     load_user()
+# except Exception:
+#     logger.exception("Request failed")
+
+# JSON + ExceptionGroup
+# from xylog import get_logger
+# from xylog.handlers import ConsoleHandler
+# from xylog.formatter import JsonFormatter
+
+# handler = ConsoleHandler(
+#     formatter=JsonFormatter(
+#         exception_mode="compact",
+#     ),
+# )
+
+# logger = get_logger(
+#     "app",
+#     handlers=[handler],
+#     propagate=False,
+# )
+
+# def validate_user() -> None:
+#     raise ValueError("Invalid user")
+
+# def validate_permissions() -> None:
+#     raise PermissionError("Insufficient permissions")
+
+# def database_operation() -> None:
+#     raise TimeoutError("Database timed out")
+
+# def process() -> None:
+#     validation_errors = []
+
+#     try:
+#         validate_user()
+#     except Exception as exc:
+#         validation_errors.append(exc)
+
+#     try:
+#         validate_permissions()
+#     except Exception as exc:
+#         validation_errors.append(exc)
+
+#     validation_group = ExceptionGroup(
+#         "Validation failed",
+#         validation_errors,
+#     )
+
+#     try:
+#         database_operation()
+#     except Exception as exc:
+#         raise ExceptionGroup(
+#             "Processing failed",
+#             [
+#                 validation_group,
+#                 exc,
+#             ],
+#         )
+
+# try:
+#     process()
+# except Exception:
+#     logger.exception("Request failed")
