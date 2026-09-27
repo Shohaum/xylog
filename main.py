@@ -634,19 +634,19 @@
 #     logger.info("Context restored")
 
 # Async context capture
-from xylog import get_logger
-from xylog.handlers import AsyncHandler, FileHandler
+# from xylog import get_logger
+# from xylog.handlers import AsyncHandler, FileHandler
 
-handler = AsyncHandler(
-    FileHandler("logs/context_async.log")
-)
+# handler = AsyncHandler(
+#     FileHandler("logs/context_async.log")
+# )
 
-logger = get_logger(
-    "AsyncContext",
-    handlers=[handler],
-)
+# logger = get_logger(
+#     "AsyncContext",
+#     handlers=[handler],
+# )
 
-with logger.context(request_id="req-123"):
-    logger.info("Message from request")
+# with logger.context(request_id="req-123"):
+#     logger.info("Message from request")
 
-logger.close()
+# logger.close()

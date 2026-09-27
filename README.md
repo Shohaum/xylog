@@ -1,804 +1,441 @@
 # xylog
 
-A lightweight, modern, and extensible logging library for Python.
+A lightweight, hierarchical logging library for Python — built for applications that outgrow the standard library's `logging` module without wanting the ceremony that comes with it.
 
-`xylog` is built from scratch with a focus on clean architecture, immutable log records, thread safety, structured logging, asynchronous processing, and extensibility.
-
-> **Current Version:** v3.0.0
-
----
-
-## Features
-
-- Simple API with `get_logger()`
-- Global logging configuration
-- Logger hierarchy and propagation
-- Immutable log records
-- Six log levels
-- Console logging
-- File logging
-- Rotating file logging
-- Asynchronous logging
-- Thread-safe handlers
-- Exception logging with immutable traceback snapshots
-- Structured logging with `extra`
-- Context-aware logging using `ContextVar`
-- JSON formatting
-- Colored console output
-- Automatic TTY-aware colored output
-- Multiple handlers per logger
-- Multiple formatters
-- Custom filters
-- Pre-record filtering for inexpensive rejection
-- UTC timestamps
-- Caller information
-- Cached logger instances
-- Graceful shutdown
-- Extensible formatter and handler architecture
-- Performance benchmarks
-
----
-
-## Installation
-
-Clone the repository:
+`xylog` gives you sane defaults out of the box (colored console output, sensible level filtering, thread-safe writes) while staying easy to extend with custom handlers, formatters, and filters when you need more control.
 
 ```bash
-git clone https://github.com/Shohaum/xylog.git
-cd xylog
+pip install xylog
 ```
 
-Install in editable mode:
+## Why xylog?
 
-```bash
-python -m pip install -e .
-```
-
-For development:
-
-```bash
-python -m pip install -e ".[dev]"
-```
-
----
+- **Hierarchical by default** — loggers inherit levels and handlers from their parents (`app` → `app.api` → `app.api.auth`), just like you'd expect.
+- **Structured context** — attach request IDs, user IDs, or any metadata to a block of code and have it flow into every log line inside it.
+- **Async-friendly** — wrap any handler in `AsyncHandler` to move I/O off the hot path.
+- **Batteries included** — JSON output, colored terminal output, file rotation, and level-based filtering are all built in.
+- **Thread-safe** — write from as many threads as you like without corrupting output.
 
 ## Quick Start
 
 ```python
 from xylog import get_logger
 
-logger = get_logger("App")
+logger = get_logger("Demo")
 
 logger.info("Application started")
-logger.warning("Disk space is running low")
+logger.debug("Debug message")
+logger.warning("Low disk space")
 logger.error("Something went wrong")
 ```
 
-Example output:
+### Catching exceptions
 
-```text
-2026-08-22 11:20:18.848358 UTC [INFO] [App] Application started (/path/to/main.py:6)
-```
-
----
-
-## Log Levels
-
-`xylog` provides six log levels:
-
-```text
-TRACE
-DEBUG
-INFO
-WARNING
-ERROR
-CRITICAL
-```
-
-The default level is `INFO`.
-
-```python
-from xylog import get_logger
-from xylog.levels import LogLevel
-
-logger = get_logger(
-    "App",
-    level=LogLevel.DEBUG,
-)
-
-logger.debug("Debug information")
-logger.info("Application started")
-```
-
-Messages below the configured effective level are ignored.
-
----
-
-## Global Configuration
-
-Applications can configure the logging system once and allow child loggers to inherit the configuration.
-
-```python
-from xylog import configure, get_logger
-from xylog.handlers import ConsoleHandler, FileHandler
-from xylog.levels import LogLevel
-
-configure(
-    level=LogLevel.INFO,
-    handlers=[
-        ConsoleHandler(),
-        FileHandler("logs/app.log"),
-    ],
-)
-
-logger = get_logger("App.API")
-
-logger.info("Request started")
-```
-
-Individual loggers can still override the inherited level, handlers, filters, or propagation behavior.
-
----
-
-## Logger Hierarchy
-
-Logger names form a hierarchy using `.` as the separator.
-
-```python
-from xylog import get_logger
-
-app = get_logger("app")
-api = get_logger("app.api")
-auth = get_logger("app.api.auth")
-```
-
-The resulting hierarchy is:
-
-```text
-app
-├── api
-│   └── auth
-```
-
-Child loggers inherit configuration from their parents unless explicitly overridden.
-
-By default, records propagate toward the root logger.
-
-```python
-logger = get_logger(
-    "app.api.auth",
-    propagate=False,
-)
-```
-
-This disables propagation for that logger.
-
----
-
-## Exception Logging
-
-Exceptions are captured as immutable snapshots using Python's `TracebackException`.
+`logger.exception()` captures the traceback alongside your message:
 
 ```python
 try:
     10 / 0
 except Exception as exc:
-    logger.exception(
-        "Division failed",
-        exception=exc,
-    )
+    logger.exception("Division failed", exception=exc)
 ```
 
-Example output:
+## Core Concepts
 
-```text
-2026-08-22 11:20:18.848358 UTC [ERROR] [App] Division failed (/path/to/main.py:12)
-Traceback (most recent call last):
-...
-ZeroDivisionError: division by zero
-```
+### Loggers are cached
 
-The logging system does not retain live traceback frames and their local variables.
-
----
-
-## Structured Logging
-
-Additional structured data can be attached to individual records using `extra`.
+Calling `get_logger()` with the same name always returns the same instance, so you never have to worry about passing loggers around — just call `get_logger("Auth")` wherever you need it.
 
 ```python
-logger.info(
-    "User logged in",
-    extra={
-        "user_id": 42,
-        "country": "India",
-    },
-)
+logger1 = get_logger("Auth")
+logger2 = get_logger("Auth")
+
+print(logger1 is logger2)  # True
 ```
 
-The metadata is captured as an immutable snapshot when the `LogRecord` is created.
-
----
-
-## Logging Context
-
-Context can be attached to all records created within a scope.
+Different names, of course, give you different loggers:
 
 ```python
-with logger.context(
-    request_id="req-123",
-    user_id=42,
-):
-    logger.info("Request started")
-    logger.info("Fetching user")
-    logger.info("Request completed")
+logger1 = get_logger("Auth")
+logger2 = get_logger("Database")
+
+print(logger1 is logger2)  # False
 ```
 
-The resulting records automatically contain:
+### Log levels
 
-```text
-request_id='req-123' user_id=42
-```
-
-Contexts can be nested:
+Set `logger.level` to filter out anything below that severity:
 
 ```python
-with logger.context(request_id="req-123"):
-    logger.info("Request started")
+from xylog import get_logger
+from xylog.levels import LogLevel
 
-    with logger.context(user_id=42):
-        logger.info("User loaded")
+logger = get_logger("Demo")
+logger.level = LogLevel.ERROR
 
-    logger.info("Request completed")
+logger.info("Hidden")
+logger.warning("Hidden")
+logger.error("Visible")
 ```
 
-The inner context inherits the outer context.
+### Hierarchy and inheritance
 
-Context is implemented using Python's `ContextVar`, making it suitable for concurrent execution contexts.
-
-The context is captured when the `LogRecord` is created, so asynchronous handlers do not depend on the context of the originating thread.
-
-You can also use the context API directly:
+Logger names form a dot-separated tree. A logger's `parent` is inferred automatically from its name, and levels cascade down to children that haven't set their own:
 
 ```python
-from xylog import bind, clear_context, get_context
+app = get_logger("app")
+api = get_logger("app.api")
+auth = get_logger("app.api.auth")
 
-with bind(request_id="req-123"):
-    ...
+assert api.parent is app
+assert auth.parent is api
 ```
 
----
+```mermaid
+graph TD
+    A["app"] --> B["app.api"]
+    B --> C["app.api.auth"]
+    B --> D["app.api.payments"]
+    A --> E["app.worker"]
+```
 
-## File Logging
+If a child logger is created *before* its parent exists, `xylog` still resolves the relationship correctly once the parent shows up:
+
+```python
+child = get_logger("backend.api.auth")
+assert child.parent.name == ""   # falls back to the root logger
+
+parent = get_logger("backend.api")
+assert child.parent is parent    # re-linked automatically
+```
+
+**Level inheritance** — a child with no level set inherits its `effective_level` from the nearest ancestor that has one:
+
+```python
+app.level = LogLevel.WARNING
+
+assert api.level is None
+assert api.effective_level == LogLevel.WARNING
+
+assert auth.level is None
+assert auth.effective_level == LogLevel.WARNING
+```
+
+A child can always override its parent:
+
+```python
+auth.level = LogLevel.DEBUG
+
+assert auth.effective_level == LogLevel.DEBUG   # own level wins
+assert api.effective_level == LogLevel.WARNING  # still inherited
+```
+
+### Propagation
+
+By default, a log record bubbles up through every ancestor logger, so a handler attached at the root catches everything below it:
+
+```mermaid
+flowchart LR
+    R["auth.error('Authentication failed')"] --> P1["app.api.auth"]
+    P1 -- propagate --> P2["app.api"]
+    P2 -- propagate --> P3["app"]
+    P3 --> H["FileHandler → app.log"]
+```
+
+```python
+app = get_logger("application", handlers=[FileHandler("logs/hierarchy.log")])
+auth = get_logger("application.api.auth")
+
+auth.error("Authentication failed")
+# "Authentication failed" ends up in logs/hierarchy.log
+```
+
+Turn it off per-logger with `propagate=False` when you want a subtree to stay quiet:
+
+```python
+worker = get_logger("service.worker", propagate=False)
+worker.error("Worker failure")
+# never reaches the parent's handlers
+```
+
+A message is only ever written once, even when several loggers in the chain could see it — no duplicate lines from shared handlers.
+
+## Handlers
+
+Handlers decide *where* a log record ends up. Attach one or more to any logger:
 
 ```python
 from xylog import get_logger
 from xylog.handlers import FileHandler
 
-logger = get_logger(
-    "App",
-    handlers=[
-        FileHandler("logs/app.log"),
-    ],
-)
+logger = get_logger("FileLogger")
+logger.add_handler(FileHandler("logs/app.log"))
 
 logger.info("Written to file")
 ```
 
-`FileHandler` creates the parent directory when necessary and flushes each record after writing.
-
----
-
-## Rotating File Logging
-
-`RotatingFileHandler` automatically rotates the log file when it reaches a configured size.
+You can attach as many as you like — a `ConsoleHandler` for humans and a `FileHandler` for records, for instance:
 
 ```python
-from xylog import get_logger
+logger.add_handler(FileHandler("logs/demo.log"))
+logger.info("Hello")  # goes to both the console and the file
+```
+
+### Rotating files
+
+`RotatingFileHandler` caps file size and keeps a configurable number of backups:
+
+```python
 from xylog.handlers import RotatingFileHandler
 
 handler = RotatingFileHandler(
-    "logs/app.log",
-    max_bytes=1024 * 1024,
-    backup_count=5,
+    "logs/rotation.log",
+    max_bytes=500,
+    backup_count=3,
 )
 
-logger = get_logger(
-    "App",
-    handlers=[handler],
-)
+logger = get_logger("RotationTest", handlers=[handler])
 
-logger.info("Application started")
-```
-
-This produces files such as:
-
-```text
-logs/
-├── app.log
-├── app.log.1
-├── app.log.2
-├── app.log.3
-├── app.log.4
-└── app.log.5
-```
-
-The newest rotated file is always `.1`.
-
----
-
-## Asynchronous Logging
-
-`AsyncHandler` processes another handler in a background worker thread.
-
-```python
-from xylog import get_logger
-from xylog.handlers import AsyncHandler, FileHandler
-
-handler = AsyncHandler(
-    FileHandler("logs/app.log")
-)
-
-logger = get_logger(
-    "App",
-    handlers=[handler],
-)
-
-logger.info("Processed asynchronously")
+for i in range(100):
+    logger.info(f"This is test message number {i}")
 
 logger.close()
 ```
 
-The application thread creates the immutable `LogRecord` and places it into a queue. The worker thread performs formatting and output processing.
+### Async handlers
 
-`close()` performs a graceful shutdown and waits for queued records to be processed.
+Wrap any handler in `AsyncHandler` to push writes onto a background thread — useful for high-throughput logging where you don't want I/O blocking your request path:
 
-### Why asynchronous logging?
-
-Async logging is particularly useful when the logging destination is slow.
-
-The application path becomes:
-
-```text
-Application thread
-      │
-      ▼
-  LogRecord
-      │
-      ▼
-    Queue
-      │
-      └──────────────► return
-                         │
-                         ▼
-                   Worker thread
-                         │
-                         ▼
-                    Format + I/O
+```mermaid
+flowchart LR
+    L["logger.info(...)"] --> Q["AsyncHandler queue"]
+    Q -->|background thread| H["Wrapped handler\n(File / Console / Rotating)"]
 ```
 
-The I/O work is not eliminated; it is moved away from the application thread.
+```python
+from xylog.handlers import AsyncHandler, FileHandler
 
----
+handler = AsyncHandler(FileHandler("logs/async.log"))
+logger = get_logger("AsyncTest", handlers=[handler])
 
-## JSON Logging
+for i in range(1000):
+    logger.info(f"Message {i}")
 
-Use `JsonFormatter` when logs need to be consumed by log aggregation or monitoring systems.
+logger.close()
+```
+
+Always call `logger.close()` (or `shutdown()`) when you're done, so buffered messages are flushed before the process exits.
+
+## Formatters
+
+### JSON output
+
+`JsonFormatter` is a good default for anything shipping logs to an aggregator:
 
 ```python
-from xylog import get_logger
 from xylog.formatter import JsonFormatter
 from xylog.handlers import ConsoleHandler
 
 logger = get_logger(
     "API",
-    handlers=[
-        ConsoleHandler(
-            formatter=JsonFormatter(),
-        ),
-    ],
+    handlers=[ConsoleHandler(formatter=JsonFormatter())],
 )
 
-with logger.context(
-    request_id="req-123",
-    user_id=42,
-):
+with logger.context(request_id="req-123", user_id=42):
     logger.info("Request started")
 ```
 
-Example output:
+### Colored terminal output
 
-```json
-{
-  "timestamp": "2026-08-22T11:20:18.848358+00:00",
-  "level": "INFO",
-  "logger": "API",
-  "message": "Request started",
-  "process_id": 12345,
-  "thread_id": 123456,
-  "extra": {
-    "request_id": "req-123",
-    "user_id": 42
-  },
-  "caller": {
-    "file": "/path/to/main.py",
-    "function": "<module>",
-    "line": 12
-  }
-}
-```
-
----
-
-## Colored Console Output
-
-`ColoredFormatter` provides ANSI-colored output based on log level.
+`ColoredFormatter` adds ANSI colors per level when writing to a real terminal:
 
 ```python
-from xylog import get_logger
 from xylog.formatter import ColoredFormatter
 from xylog.handlers import ConsoleHandler
 
 logger = get_logger(
-    "App",
-    handlers=[
-        ConsoleHandler(
-            formatter=ColoredFormatter(),
-        ),
-    ],
+    "API",
+    handlers=[ConsoleHandler(formatter=ColoredFormatter())],
 )
 
 logger.debug("Debug information")
-logger.info("Application started")
+logger.info("Server started")
 logger.warning("Cache miss")
 logger.error("Database timeout")
 logger.critical("System failure")
 ```
 
-`ColoredFormatter` automatically detects whether the output stream is a TTY and only emits ANSI color codes when appropriate.
-
----
-
-## Multiple Handlers
-
-A logger can send the same record to multiple handlers.
-
-```python
-from xylog import get_logger
-from xylog.formatter import JsonFormatter
-from xylog.handlers import ConsoleHandler, FileHandler
-
-logger = get_logger(
-    "App",
-    handlers=[
-        ConsoleHandler(),
-        FileHandler(
-            "logs/app.log",
-            formatter=JsonFormatter(),
-        ),
-    ],
-)
-
-logger.info("Application started")
-```
-
-Each handler can have its own formatter and output destination.
-
----
+Color is TTY-aware: pair `ColoredFormatter` with a `FileHandler` and the ANSI codes are stripped automatically, so your log files stay clean even if you reuse the same formatter everywhere.
 
 ## Filters
 
-Filters can determine whether a record should be emitted.
+Filters decide whether a record gets through, independent of the logger's own level — handy for routing only certain severities to a specific handler.
 
 ```python
-from xylog import get_logger
 from xylog.filters import LevelFilter
 from xylog.levels import LogLevel
 
 logger = get_logger(
-    "App",
-    filters=[
-        LevelFilter(LogLevel.WARNING),
-    ],
+    "FilterTest",
+    level=LogLevel.DEBUG,
+    filters=[LevelFilter(LogLevel.ERROR)],
 )
 
-logger.info("Ignored")
-logger.warning("Allowed")
-logger.error("Allowed")
+logger.debug("Should NOT appear")
+logger.info("Should NOT appear")
+logger.warning("Should NOT appear")
+logger.error("Should appear")
+logger.critical("Should appear")
+
+logger.close()
 ```
 
-`xylog` includes:
-
-- `Filter`
-- `LevelFilter`
-- `LoggerNameFilter`
-- `FunctionFilter`
-
-Filters that can make a decision from inexpensive information can reject a message before `LogRecord` construction.
-
-This avoids unnecessary caller inspection, context capture, and record creation.
-
----
-
-## Handlers
-
-The built-in handlers are:
-
-```text
-Handler
-├── ConsoleHandler
-├── FileHandler
-├── RotatingFileHandler
-└── AsyncHandler
-```
-
-Handlers are thread-safe and responsible for output processing.
-
-Custom handlers can be created by subclassing `Handler` and implementing `write()`.
-
----
-
-## Formatters
-
-The built-in formatters are:
-
-```text
-Formatter
-├── DefaultFormatter
-├── JsonFormatter
-└── ColoredFormatter
-```
-
-Formatters are responsible only for converting a `LogRecord` into its output representation.
-
-Custom formatters can be created by implementing:
+Filters can also be scoped to a single handler, so different sinks see different slices of the same stream:
 
 ```python
-from xylog.formatter import Formatter
+from xylog.handlers import ConsoleHandler, FileHandler
 
-class MyFormatter(Formatter):
-    def format(self, record):
-        return record.message
+console = ConsoleHandler()  # sees everything
+
+file_handler = FileHandler(
+    "logs/errors.log",
+    filters=[LevelFilter(LogLevel.ERROR)],  # only errors and above
+)
+
+logger = get_logger("HandlerFilterTest", handlers=[console, file_handler])
 ```
 
----
+This composes with `AsyncHandler` too — filters are evaluated the same way whether the handler writes synchronously or on a background thread.
 
-## Architecture
+## Structured context
 
-The core logging pipeline is:
-
-```text
-Application
-     │
-     ▼
-   Logger
-     │
-     ├── Level check
-     ├── Pre-record filters
-     │
-     ▼
-LogRecordFactory
-     │
-     ├── CallerInspector
-     ├── ExceptionInfo
-     ├── Logging Context
-     └── Immutable Metadata
-     │
-     ▼
- LogRecord
-     │
-     ▼
-   Filters
-     │
-     ▼
-  Handlers
-     │
-     ├── ConsoleHandler
-     ├── FileHandler
-     ├── RotatingFileHandler
-     └── AsyncHandler
-     │
-     ▼
- Formatters
-     │
-     ├── DefaultFormatter
-     ├── JsonFormatter
-     └── ColoredFormatter
-     │
-     ▼
-   Destination
-```
-
-The `LogRecord` is immutable and contains the historical information needed by downstream processing.
-
-The asynchronous handler preserves this property by queuing the already-created record rather than reconstructing logging context later.
-
----
-
-## Design Principles
-
-The project follows these principles:
-
-- Single Responsibility Principle
-- Immutable log records
-- Separation of concerns
-- Composition over inheritance
-- Explicit dependencies
-- Thread-safe handlers
-- Structured data over formatted strings
-- Cheap rejection before expensive work
-- Minimal public API
-- Extensible architecture
-- Standard-library primitives where appropriate
-- Measure before optimizing
-
----
-
-## Performance
-
-Performance is measured using a dedicated benchmark suite with 10,000 iterations.
-
-Baseline results on the development machine:
-
-| Operation | Per operation |
-|---|---:|
-| Record creation | 27.28 µs |
-| Filtered DEBUG | 0.25 µs |
-| JSON formatting | 2.23 µs |
-| File logging | 51.50 µs |
-| Async logging | 67.74 µs |
-| Context logging | 48.51 µs |
-
-### Pre-record filtering
-
-Before optimization, rejected DEBUG messages took approximately `47.42 µs/op`.
-
-After adding pre-record filtering:
-
-```text
-47.42 µs/op → 0.25 µs/op
-```
-
-This represents approximately **99.47% lower latency** for that rejection path.
-
-### Asynchronous logging
-
-A benchmark using a deliberately slow handler demonstrated the intended purpose of `AsyncHandler`.
-
-With a 1 ms delay per write:
-
-| Metric | Synchronous | Asynchronous |
-|---|---:|---:|
-| Application time | 1.5964 s | 0.0845 s |
-| Per operation | 1596.38 µs | 84.46 µs |
-
-This reduced application-thread logging time by approximately **94.7%**.
-
-The underlying I/O work still occurs; asynchronous logging moves it to the worker thread.
-
-See [`benchmark.md`](https://github.com/Shohaum/xylog/blob/v3/main/docs/benchmarks.md) for methodology and optimization history.
-
----
-
-## Project Structure
-
-```text
-xylog/
-│
-├── xylog/
-│   ├── __init__.py
-│   ├── _internal.py
-│   ├── caller_info.py
-│   ├── context.py
-│   ├── exception_info.py
-│   ├── filters.py
-│   ├── formatter.py
-│   ├── handlers.py
-│   ├── levels.py
-│   ├── logger.py
-│   ├── manager.py
-│   ├── record.py
-│   ├── record_factory.py
-│   └── utils/
-│       └── immutable.py
-│
-├── benchmarks/
-│   ├── benchmarks.py
-│   └── slow_handler.py
-│
-├── tests/
-│
-├── docs/
-│   ├── benchmarks.md
-│   └── architecture.md
-├── README.md
-├── pyproject.toml
-└── .gitignore
-```
-
----
-
-## Development
-
-Create a virtual environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-Install the project with development dependencies:
-
-```bash
-python -m pip install -e ".[dev]"
-```
-
-Run the test suite:
-
-```bash
-pytest
-```
-
-Run the benchmarks:
-
-```bash
-python3 -m benchmarks.benchmarks
-```
-
----
-
-## Public API
-
-The primary API is intentionally small:
+Use `logger.context()` to attach metadata to every log call made inside the block — great for request IDs, user IDs, or trace IDs:
 
 ```python
-from xylog import (
-    configure,
-    get_logger,
-    shutdown,
+logger = get_logger("ContextTest")
+
+with logger.context(request_id="req-123"):
+    logger.info("First")
+
+    with logger.context(user_id=42):
+        logger.info("Second")   # has both request_id and user_id
+
+    logger.info("Third")        # back to just request_id
+```
+
+An explicit `extra=` argument on a single call always wins over whatever's in the surrounding context:
+
+```python
+with logger.context(user_id=42):
+    logger.info("Test", extra={"user_id": 100})  # user_id=100
+```
+
+Need a clean slate for a moment? `clear_context()` temporarily suspends whatever's active:
+
+```python
+from xylog import clear_context
+
+with logger.context(request_id="req-123"):
+    logger.info("Has context")
+
+    with clear_context():
+        logger.info("No context")
+
+    logger.info("Context restored")
+```
+
+Context is captured correctly even when the write happens later on a background thread via `AsyncHandler`.
+
+## Extra metadata
+
+Attach one-off structured fields to any log call with `extra=`:
+
+```python
+logger.info(
+    "User logged in",
+    extra={"user_id": 42, "country": "India"},
 )
 ```
 
-Advanced functionality is available through handlers, formatters, filters, and context utilities.
+## Global configuration
+
+For simple applications, `configure()` sets defaults for every logger without having to pass `level=` or `handlers=` each time:
 
 ```python
-from xylog import (
-    AsyncHandler,
-    ColoredFormatter,
-    FileHandler,
-    LevelFilter,
-    RotatingFileHandler,
-)
+from xylog import configure, get_logger
+from xylog.levels import LogLevel
+
+configure(level=LogLevel.WARNING)
+
+logger = get_logger("app.api")
+assert logger.effective_level == LogLevel.WARNING
+
+logger.info("Should NOT appear")
+logger.warning("Should appear")
 ```
 
----
+A logger created with an explicit `level=` still overrides the global default:
 
-## Versioning
-
-The project follows semantic versioning.
-
-Current release:
-
-```text
-3.0.0
+```python
+logger = get_logger("app.debug", level=LogLevel.DEBUG)
+assert logger.effective_level == LogLevel.DEBUG
 ```
 
----
+Calling `configure()` again updates existing loggers immediately:
 
-## Future
+```python
+configure(level=LogLevel.ERROR)
+logger = get_logger("app.api")
+assert logger.effective_level == LogLevel.ERROR
 
-Potential future features include:
+configure(level=LogLevel.DEBUG)
+assert logger.effective_level == LogLevel.DEBUG
+```
 
-- Time-based rotating files
-- Log compression
-- Remote logging
-- OpenTelemetry integration
-- Additional structured logging features
-- More advanced configuration
-- Metrics and observability integrations
+Global handlers work the same way:
 
----
+```python
+from xylog.handlers import FileHandler
+
+configure(handlers=[FileHandler("logs/config.log")])
+
+logger = get_logger("app.api.auth")
+logger.info("Configuration works")
+logger.close()
+```
+
+## Thread safety
+
+`xylog` is safe to use from multiple threads without any extra locking on your part:
+
+```python
+import threading
+from xylog import get_logger
+
+logger = get_logger("Threads")
+
+def worker(index: int):
+    for i in range(100):
+        logger.info(f"Worker {index}: {i}")
+
+threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+```
+
+## Shutting down
+
+Call `shutdown()` once at the end of your program to flush and close every logger that's been created — particularly important if you're using `AsyncHandler` anywhere:
+
+```python
+from xylog import shutdown
+
+shutdown()
+```
 
 ## License
 
-MIT License
+MIT
